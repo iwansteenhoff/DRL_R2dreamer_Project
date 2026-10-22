@@ -217,3 +217,94 @@ To compare modalities later, pass both run directories followed by matching labe
 python plot_learning_curves.py logdir/images_run logdir/images_proprio_run \
   --labels "Images only" "Images + proprioception" --output-dir plots/comparison
 ```
+
+
+## Evaluating visual and proprioceptive reliance
+
+Run this **after image + proprioception training finishes**, inside tmux with the
+project environment activated. It loads the checkpoint's saved architecture and
+DMC settings; you do not need to repeat training overrides. No replay is loaded,
+no optimizer updates run, and model parameters are frozen. Install `.[plot]` if
+matplotlib is not already available (as in the plotting instructions above).
+
+```bash
+MUJOCO_GL=egl python evaluate_ablations.py \
+  logdir/reacher_hard_images_proprio_cpu_replay_seed0 \
+  --episodes 100 --seed-start 100000 --videos 3
+```
+
+The default device is `cuda:0`; use `--device cpu` for CPU inference. Each of the
+100 matched episode seeds is evaluated in all six conditions:
+
+| Condition | Images | Joint position and velocity |
+|---|---|---|
+| `baseline` | Live, correct scene | Live, correct |
+| `wrong_target` | Current arm, independently positioned visible target | Live, correct |
+| `frozen` | First image of the current episode, repeated | Live, correct |
+| `unrelated` | Time-aligned images from an independent donor episode | Live, correct |
+| `black` | All-zero uint8 images | Live, correct |
+| `corrupted_proprio` | Live, correct scene | Time-aligned joint states from the donor episode |
+
+Donors are independent baseline-policy episodes from this same frozen model,
+not random vectors or random-action trajectories. One donor is recorded per
+matched seed and shared by `unrelated` and `corrupted_proprio`. Donor collection
+adds 100 episodes, so a full run executes **700 episodes** in total. A timing
+estimate prints after the first ten matched seeds. Evaluation runs sequentially,
+uses actor mode actions and stochastic RSSM inference, and resets the policy RNG
+to the same seed before each matched condition. It verifies identical initial
+physics states and real target coordinates across conditions. Only image,
+position, velocity, and episode flags reach the policy; target vectors and rewards
+are never fed to it.
+
+Fake targets are sampled independently from Reacher's normal angle/radius
+distribution and held fixed during the episode. Only MuJoCo's rendered scene is
+changed via `scene_callback`; simulation/model geometry, real targets, state
+observations, and reward calculations remain untouched. The fake target can
+occasionally land close to the real target, as expected under independent sampling.
+The first frozen frame still contains the real target; that condition tests loss
+of visual feedback, not complete removal of all target information. Donor inputs
+preserve familiar ranges but deliberately break consistency with the live episode.
+Black images remain an out-of-distribution stress test. None of these ablations
+alone proves the model completely ignores or exclusively uses a modality.
+
+Results default to `<run>/ablations/`:
+
+- `experiment.json`: checkpoint path/training step, device, seed and condition definitions.
+- `episodes.jsonl` and `episodes.csv`: individual returns, episode lengths, timings,
+  and seeds. JSONL also records initial states and true/fake target coordinates.
+- `summary.json`: mean returns and paired differences from normal inputs, with
+  reproducible 95% bootstrap intervals over evaluation episodes.
+- `ablation_comparison.png` / `.pdf`: episode points, means, return intervals,
+  and paired return differences.
+- `examples/`: side-by-side videos (real scene on the left; actual image fed to
+  the policy on the right), plus endpoint trajectories, true/input joint states,
+  and actions in NPZ files. Three episodes per condition are recorded by default.
+- `example_trajectories.png` / `.pdf`: first matched example, showing endpoint paths
+  and real/fake targets. Videos show actions before each transition at 25 FPS,
+  appropriate for standard Reacher with action repeat 2.
+
+Intervals describe uncertainty over evaluation episodes **for this one trained
+checkpoint**, not variability across independently trained models. No smoothing
+or fabricated training-seed uncertainty is added. For corrupted proprioception
+the video image panels are identical; its NPZ file records the changed joint inputs.
+
+Use `--videos 0` to disable videos/trajectories and `--no-plots` to skip plotting.
+Replot saved results with:
+
+```bash
+python plot_ablations.py logdir/reacher_hard_images_proprio_cpu_replay_seed0/ablations
+```
+
+Existing output directories containing `experiment.json` are never overwritten;
+choose a new `--output-dir` when repeating an experiment. Per-episode JSONL records
+are flushed as evaluation proceeds. A quick functionality check (not a scientific
+result) can shorten episodes:
+
+```bash
+MUJOCO_GL=egl python evaluate_ablations.py \
+  logdir/reacher_hard_images_proprio_cpu_replay_seed0 \
+  --episodes 2 --time-limit 8 --videos 0 --output-dir /tmp/reacher_ablation_check
+```
+
+For the real experiment, omit `--time-limit` to retain the checkpoint's original
+1,000-environment-step episodes.
