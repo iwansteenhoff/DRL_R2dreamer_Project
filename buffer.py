@@ -1,9 +1,12 @@
+import copy
 from collections import deque
 
 import torch
 from tensordict import TensorDict
 from torchrl.data.replay_buffers import LazyTensorStorage, ReplayBuffer
 from torchrl.data.replay_buffers.samplers import SliceSampler
+
+from disk_replay import CheckpointMemmapStorage
 
 
 class OnlineQueue:
@@ -47,8 +50,17 @@ class Buffer:
         self.batch_size = int(config.batch_size)
         self.batch_length = int(config.batch_length)
         self.num_eps = 0
+        backend = getattr(config, "backend", "memory")
+        if backend == "memmap":
+            self.storage_device = torch.device("cpu")
+            storage = CheckpointMemmapStorage(config.max_size, config.directory)
+            print(f"Replay storage: memory-mapped files at {storage.directory}")
+        elif backend == "memory":
+            storage = LazyTensorStorage(max_size=config.max_size, device=self.storage_device, ndim=2)
+        else:
+            raise ValueError(f"Unknown replay backend: {backend}")
         self._buffer = ReplayBuffer(
-            storage=LazyTensorStorage(max_size=config.max_size, device=self.storage_device, ndim=2),
+            storage=storage,
             sampler=SliceSampler(
                 num_slices=self.batch_size, end_key=None, traj_key="episode", truncated_key=None, strict_length=True
             ),
@@ -57,6 +69,34 @@ class Buffer:
         )
         self._online = OnlineQueue(self.batch_length + 1, 2 * self.batch_size) if config.online else None
         self._update_latents = bool(config.update_latents)
+
+    def state_dict(self):
+        return {
+            "replay": self._buffer.state_dict(),
+            "num_eps": self.num_eps,
+            "online": self._online,
+        }
+
+    def checkpoint_committed(self, state):
+        if isinstance(self._buffer.storage, CheckpointMemmapStorage):
+            self._buffer.storage.commit(state["replay"]["_storage"])
+
+    def load_state_dict(self, state):
+        if "disk_format" in state["replay"]["_storage"] and not isinstance(
+            self._buffer.storage, CheckpointMemmapStorage
+        ):
+            raise ValueError("This checkpoint requires buffer.backend=memmap and its replay directory.")
+        self._buffer.load_state_dict(state["replay"])
+        storage = self._buffer.storage
+        if storage.initialized and not isinstance(storage, CheckpointMemmapStorage):
+            # Checkpoints are read on CPU to avoid duplicating the model on GPU.
+            storage._storage = storage._storage.to(self.storage_device)
+        self.num_eps = state["num_eps"]
+        # Do not retain mappings of a legacy full checkpoint through ready windows.
+        self._online = copy.deepcopy(state["online"])
+        if self._online is not None:
+            # New simulator episodes must not complete pre-interruption windows.
+            self._online._pending.clear()
 
     def add_transition(self, data):
         # This is batched data and lifted for storage.
@@ -113,6 +153,10 @@ class Buffer:
         # (B, T, D) -> (B*T, D)
         deter = deter.reshape(-1, *deter.shape[2:])
         # In storage, the length is the first dimension, and the batch (number of environments) is the second dimension.
+        if isinstance(self._buffer.storage, CheckpointMemmapStorage):
+            # TorchRL's tuple assignment returns a direct TensorDict view and
+            # bypasses Storage.set(), so journal these rows explicitly.
+            self._buffer.storage._protect(index[0])
         n = index[0].shape[0]
         self._buffer[index[1], index[0]] = TensorDict({"stoch": stoch, "deter": deter}, batch_size=(n,))
 

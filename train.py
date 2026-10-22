@@ -1,11 +1,14 @@
 import atexit
+import fcntl
 import pathlib
+import signal
 import sys
 import warnings
 
 import hydra
 import torch
 
+import checkpoint
 import tools
 from buffer import Buffer
 from dreamer import Dreamer
@@ -25,6 +28,12 @@ def main(config):
         tools.enable_deterministic_run()
     logdir = pathlib.Path(config.logdir).expanduser()
     logdir.mkdir(parents=True, exist_ok=True)
+    # In-place replay has one writer. Never allow two resumed runs to share it.
+    run_lock = (logdir / ".train.lock").open("a")
+    try:
+        fcntl.flock(run_lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError as error:
+        raise RuntimeError(f"Another training process is using {logdir}.") from error
 
     # Mirror stdout/stderr to a file under logdir while keeping console output.
     console_f = tools.setup_console_log(logdir, filename="console.log")
@@ -32,7 +41,18 @@ def main(config):
 
     print("Logdir", logdir)
 
-    logger = tools.Logger(logdir)
+    checkpoint_path = logdir / "latest.pt"
+    restored = checkpoint.load(checkpoint_path, config) if config.resume else None
+    if not config.resume and (checkpoint_path.exists() or (logdir / "metrics.jsonl").exists()):
+        raise ValueError("Log directory already contains a run; use resume=True or a new logdir.")
+    config_state = checkpoint.experiment_config(config)
+    if restored:
+        # Remove records from work performed after the last successful checkpoint.
+        metrics_path = logdir / "metrics.jsonl"
+        if metrics_path.exists():
+            with metrics_path.open("r+b") as stream:
+                stream.truncate(restored["metrics_bytes"])
+    logger = tools.Logger(logdir, purge_step=restored["trainer"]["step"] + 1 if restored else None)
     # save config
     logger.log_hydra_config(config)
 
@@ -49,13 +69,34 @@ def main(config):
     ).to(config.device)
 
     policy_trainer = OnlineTrainer(config.trainer, replay_buffer, logger, logdir, train_envs, eval_envs)
-    policy_trainer.begin(agent)
+    if restored:
+        checkpoint.restore(restored, agent, replay_buffer)
+        print("Resuming at environment step", restored["trainer"]["step"])
+        # Release old full-checkpoint mappings after migration. Otherwise the
+        # replaced 11 GB file would remain allocated until this process exits.
+        restored = {"trainer": restored["trainer"]}
 
-    items_to_save = {
-        "agent_state_dict": agent.state_dict(),
-        "optims_state_dict": tools.recursively_collect_optim_state_dict(agent),
-    }
-    torch.save(items_to_save, logdir / "latest.pt")
+    # Handle interruptions at a complete loop boundary, never mid optimizer update.
+    stopping = False
+
+    def request_stop(signum, frame):
+        nonlocal stopping
+        stopping = True
+        print("Stop requested; saving after the current training iteration.")
+
+    previous = {sig: signal.signal(sig, request_stop) for sig in (signal.SIGINT, signal.SIGTERM)}
+    try:
+        policy_trainer.begin(
+            agent,
+            checkpoint=lambda agent, trainer: checkpoint.save(checkpoint_path, config_state, agent, trainer),
+            restored=restored["trainer"] if restored else None,
+            checkpoint_every=int(config.checkpoint.every),
+            stop_requested=lambda: stopping,
+        )
+    finally:
+        for sig, handler in previous.items():
+            signal.signal(sig, handler)
+        logger._writer.close()
 
 
 if __name__ == "__main__":

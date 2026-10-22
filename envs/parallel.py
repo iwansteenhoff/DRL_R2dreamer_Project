@@ -2,6 +2,7 @@ import atexit
 import contextlib
 import enum
 import os
+import signal
 import sys
 import time
 import traceback
@@ -211,6 +212,10 @@ class ProcessPipeWorker:
 
     @staticmethod
     def _loop(pipe, function, initializers):
+        # The parent handles terminal/job interrupts and saves at a safe boundary.
+        # Workers must remain available until that iteration finishes.
+        signal.signal(signal.SIGINT, signal.SIG_IGN)
+        signal.signal(signal.SIGTERM, signal.SIG_IGN)
         try:
             callid = None
             state = None

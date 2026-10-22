@@ -1,3 +1,5 @@
+import time
+
 import torch
 
 import tools
@@ -32,6 +34,7 @@ class OnlineTrainer:
         environments (``IsaacLabVecEnv``), no device transfer is needed —
         ``.to()`` is a no-op when source and target devices match.
         """
+        eval_seconds = self.active_seconds()
         print("Evaluating the policy...")
         envs = self.eval_envs
         agent.eval()
@@ -94,10 +97,41 @@ class OnlineTrainer:
                     )
                 ),
             )
+        self.logger.scalar("time/active_seconds", eval_seconds)
         self.logger.write(train_step)
+        # One explicit (x_steps, x_seconds, y_return) record per evaluation.
+        self.curve.append({"step": train_step, "active_seconds": eval_seconds, "eval_score": float(returns.mean())})
+        self.write_curve()
         agent.train()
 
-    def begin(self, agent):
+    def active_seconds(self):
+        return self.elapsed_seconds + (time.monotonic() - self.started_at)
+
+    def write_curve(self):
+        import json
+        import os
+
+        path = self.logger._logdir / "learning_curve.jsonl"
+        temporary = path.with_suffix(".tmp")
+        with temporary.open("w") as stream:
+            for row in self.curve:
+                stream.write(json.dumps(row) + "\n")
+        os.replace(temporary, path)
+
+    def state_dict(self):
+        return {
+            "step": self.step,
+            "update_count": self.update_count,
+            "active_seconds": self.active_seconds(),
+            "curve": self.curve,
+            "generation": self.generation,
+            "schedules": {
+                name: vars(getattr(self, name)).copy()
+                for name in ("_updates_needed", "_should_pretrain", "_should_log", "_should_eval")
+            },
+        }
+
+    def begin(self, agent, checkpoint=None, restored=None, checkpoint_every=0, stop_requested=lambda: False):
         """Main online training loop.
 
         For CPU-based environments the loop overlaps CPU stepping and GPU
@@ -107,20 +141,31 @@ class OnlineTrainer:
         """
         envs = self.train_envs
         video_cache = []
-        step = self.replay_buffer.count() * self._action_repeat
-        update_count = 0
+        restored = restored or {}
+        step = self.step = restored.get("step", 0)
+        update_count = self.update_count = restored.get("update_count", 0)
+        self.elapsed_seconds = restored.get("active_seconds", 0.0)
+        self.started_at = time.monotonic()
+        self.curve = restored.get("curve", [])
+        self.generation = restored.get("generation", -1) + 1
+        for name, state in restored.get("schedules", {}).items():
+            # Retain the configured print interval when resuming an older run.
+            saved = {key: value for key, value in state.items() if name != "_should_log" or key != "_every"}
+            vars(getattr(self, name)).update(saved)
+        self.write_curve()
+        last_checkpoint = step
         # (B,)
         done = torch.ones(envs.env_num, dtype=torch.bool, device=agent.device)
         returns = torch.zeros(envs.env_num, dtype=torch.float32, device=agent.device)
         lengths = torch.zeros(envs.env_num, dtype=torch.int32, device=agent.device)
-        episode_ids = torch.arange(
-            envs.env_num, dtype=torch.int32, device=agent.device
+        episode_ids = (
+            torch.arange(envs.env_num, dtype=torch.int32, device=agent.device) + self.generation * envs.env_num
         )  # Kept constant so short episodes (< batch_length) remain sampable; RSSM resets via is_first.
         train_metrics = tools.MetricAccumulator()
         agent_state = agent.get_initial_state(envs.env_num)
         # (B, A)
         act = agent_state["prev_action"].clone()
-        while step < self.steps:
+        while step < self.steps and not stop_requested():
             # Evaluation
             if self._should_eval(step) and self.eval_episode_num > 0 and self.eval_envs is not None:
                 self.eval(agent, step)
@@ -186,4 +231,11 @@ class OnlineTrainer:
                     if self.params_hist_log:
                         for name, param in agent._named_params.items():
                             self.logger.histogram(name, tools.to_np(param))
+                    self.logger.scalar("time/active_seconds", self.active_seconds())
                     self.logger.write(step, fps=True)
+            self.step, self.update_count = step, update_count
+            if checkpoint and checkpoint_every and step - last_checkpoint >= checkpoint_every:
+                checkpoint(agent, self)
+                last_checkpoint = step
+        if checkpoint:
+            checkpoint(agent, self)

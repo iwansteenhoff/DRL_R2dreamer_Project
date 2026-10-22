@@ -102,3 +102,118 @@ url={https://openreview.net/forum?id=Je2QqXrcQq}
 
 [r2dreamer]: https://openreview.net/forum?id=Je2QqXrcQq&referrer=%5BAuthor%20Console%5D(%2Fgroup%3Fid%3DICLR.cc%2F2026%2FConference%2FAuthors%23your-submissions)
 [dreamerv3-torch]: https://github.com/NM512/dreamerv3-torch
+
+## Interrupted runs and learning curves
+
+Replay is stored continuously in memory-mapped files under `<logdir>/replay/`
+on the local disk. Training keeps its model and sampled batches on the configured
+device (normally CUDA), while replay storage uses CPU-accessible file mappings.
+The replay directory can reach approximately 11 GB with the default model and
+500,000-transition capacity. The OS manages its cached pages; the entire replay
+does not need to remain resident in RAM.
+
+Training metrics print approximately every **1,000 environment steps** once updates
+begin (`trainer.update_log_every=1000`).
+
+Training saves model/optimizer state, replay metadata, the bounded online queue,
+and learning-curve history to `<logdir>/latest.pt` every **50,000 environment
+steps** and at normal completion. Change this with `checkpoint.every=20000`;
+`checkpoint.every=0` disables periodic saves. These checkpoints do not include
+the replay's image/latent arrays. They are typically hundreds of MB rather than
+11 GB; exact size depends on the model and online queue. Replay is flushed before
+checkpoint replacement; this still costs disk I/O but avoids repeatedly serializing
+all replay images and unused capacity.
+
+Ctrl+C or SIGTERM requests a save at the end of the current training iteration.
+A hard kill or machine failure recovers from the last completed checkpoint.
+Model checkpoints are replaced atomically, temporarily keeping the old and new
+small files. Once committed replay rows start being overwritten (or latent states
+are updated), an undo journal records their previous values before mutation.
+Recovery reverts those changes and discards appended entries beyond the saved
+length, so model state and replay both return to the checkpoint. The journal is
+cleared after a successful checkpoint. Its size depends on how much committed
+replay changes between checkpoints; in the worst case it can approach replay
+size. With the default disabled latent updates it is empty until circular writes
+reach entries already present at the last checkpoint.
+
+**Keep `latest.pt` and the entire `replay/` directory together.** The small
+checkpoint alone cannot recover the images. Use a separate log directory for
+each experiment; concurrent training writers in one directory are rejected.
+`/local` is recommended on LIACS workstations; its files are specific to that host.
+Use `buffer.backend=memory` for the original full-checkpoint implementation.
+
+Resume with the **same experiment overrides and log directory**, adding
+`resume=True`, for example:
+
+```bash
+python train.py env=dmc_vision env.task=dmc_reacher_easy \
+  seed=0 logdir=./logdir/reacher_images_seed0 resume=True
+```
+
+Model, optimizer, learning-rate scheduler, replay (including ready online
+windows), update counters, scheduling state, and Python/NumPy/PyTorch random
+states are restored. The environment-step budget remains a total budget, not
+an additional number of steps. It can be increased with `env.steps=...`.
+Other experiment settings are validated against the checkpoint. Existing full
+checkpoints from the earlier implementation convert automatically to disk replay
+when resumed with `buffer.backend=memmap` (the default). Conversion copies only
+populated rows and preserves the original checkpoint until the next successful
+save. This first conversion temporarily needs space for both the original file
+and replay files; later saves are small. Older weights-only `latest.pt` files
+cannot resume a complete run. Load only your own trusted
+checkpoints, since full replay recovery uses Python object deserialization.
+
+Simulator episodes restart on resume; pending online windows and unfinished
+training-episode statistics are discarded. New replay sequences have distinct
+identifiers so samples cannot span the interruption. Simulator random states
+are not restored, so continuation is not bit-for-bit identical to an uninterrupted
+run.
+
+`<logdir>/learning_curve.jsonl` contains one record per evaluation:
+
+```json
+{"step": 10000, "active_seconds": 123.4, "eval_score": 456.7}
+```
+
+Plot `eval_score` against `step` for an environment-steps learning curve, or
+against `active_seconds` for a wall-clock learning curve. `step` counts environment
+steps including action repeats, summed over training environments, and excludes
+evaluation steps. The time coordinate is sampled **before** evaluation, matching
+the policy being evaluated. Active time accumulates across resumed sessions;
+it includes environment interaction, model updates, logging, compilation during
+the loop, and previous evaluations. It excludes process/model/environment setup,
+checkpoint flushing/serialization, and downtime between sessions. Use identical evaluation
+and checkpoint settings across comparison runs. Enable evaluation
+(`env.eval_episode_num>0`) to obtain these curve records.
+
+The same coordinates are logged in `metrics.jsonl` and TensorBoard
+(`episode/eval_score` and `time/active_seconds`). On resume, uncheckpointed curve
+and JSON metric records are rolled back, and TensorBoard receives a purge marker
+for steps beyond the checkpoint. The checkpoint retains the complete evaluation
+curve, so it remains recoverable even if the curve file was interrupted during
+writing.
+
+
+## Plotting learning curves
+
+Install the optional plotting dependency and generate a two-panel PNG and PDF:
+
+```bash
+python -m pip install -e ".[plot]"
+python plot_learning_curves.py logdir/reacher_hard_images_cpu_replay_seed0 \
+  --labels "Images only" --title "R2-Dreamer: Reacher hard"
+```
+
+Outputs are `plots/learning_curves.png` and `plots/learning_curves.pdf`. The left
+panel plots evaluation episode return against environment steps; the right uses
+cumulative active time in hours (excluding setup, downtime, and checkpoint saves).
+The script displays raw evaluations without smoothing or confidence intervals;
+a single run cannot quantify variability across training seeds. The final plotted
+point is the last evaluation, which can precede the final training step.
+
+To compare modalities later, pass both run directories followed by matching labels:
+
+```bash
+python plot_learning_curves.py logdir/images_run logdir/images_proprio_run \
+  --labels "Images only" "Images + proprioception" --output-dir plots/comparison
+```

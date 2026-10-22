@@ -195,10 +195,10 @@ class CudaBenchmark:
 
 
 class Logger:
-    def __init__(self, logdir, filename="metrics.jsonl"):
+    def __init__(self, logdir, filename="metrics.jsonl", purge_step=None):
         self._logdir = logdir
         self._filename = filename
-        self._writer = SummaryWriter(log_dir=str(logdir), max_queue=1000)
+        self._writer = SummaryWriter(log_dir=str(logdir), max_queue=1000, purge_step=purge_step)
         self._last_step = None
         self._last_time = None
         self._scalars = {}

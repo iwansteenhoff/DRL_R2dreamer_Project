@@ -22,7 +22,9 @@ buffer:
   batch_length: ${batch_length}
   max_size: 5e5
   device: ${device}
-  storage_device: ${device}
+  storage_device: cpu
+  backend: memmap  # Disk-backed replay; use memory for the old in-memory backend.
+  directory: ${logdir}/replay
   online: True
   update_latents: False
 
@@ -36,5 +38,10 @@ trainer:
   train_ratio: ${env.train_ratio}
   video_pred_log: False
   params_hist_log: False
-  update_log_every: 5e3
+  update_log_every: 1000
   action_repeat: ${env.action_repeat}
+
+# Resume requires the same experiment configuration and log directory.
+resume: False
+checkpoint:
+  every: 50000  # Environment steps; 0 disables periodic saves (final save remains).
