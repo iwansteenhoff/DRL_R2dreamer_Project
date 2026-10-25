@@ -308,3 +308,20 @@ MUJOCO_GL=egl python evaluate_ablations.py \
 
 For the real experiment, omit `--time-limit` to retain the checkpoint's original
 1,000-environment-step episodes.
+
+To compare the three training seeds (0, 1, 2) per modality with mean ±1 sample
+standard deviation, run:
+
+```bash
+python plot_seed_comparison.py
+```
+
+This reads the six `reacher_hard_images[_proprio]_cpu_replay_seed*` runs and saves
+`plots/seed_comparison/mean_std_comparison.png` and `.pdf`, plus the aggregated
+values in `mean_std_data.csv` and source/alignment information in
+`plot_metadata.json`. Both panels use linear interpolation onto shared grids
+within the range observed by **all six runs**, with no extrapolation or smoothing.
+The time panel therefore stops at the shortest run's last recorded active time.
+Bands show sample standard deviation across three training seeds (`ddof=1`),
+not a confidence interval or variation across evaluation episodes. Override
+`--images`, `--proprio`, and `--output-dir` to use different run groups or paths.

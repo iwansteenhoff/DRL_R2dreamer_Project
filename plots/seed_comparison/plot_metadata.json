@@ -1,0 +1,27 @@
+{
+  "sources": {
+    "Images only": [
+      "/local/s3311716/DRL/r2dreamer/logdir/reacher_hard_images_cpu_replay_seed0/learning_curve.jsonl",
+      "/local/s3311716/DRL/r2dreamer/logdir/reacher_hard_images_cpu_replay_seed1/learning_curve.jsonl",
+      "/local/s3311716/DRL/r2dreamer/logdir/reacher_hard_images_cpu_replay_seed2/learning_curve.jsonl"
+    ],
+    "Images + proprioception": [
+      "/local/s3311716/DRL/r2dreamer/logdir/reacher_hard_images_proprio_cpu_replay_seed0/learning_curve.jsonl",
+      "/local/s3311716/DRL/r2dreamer/logdir/reacher_hard_images_proprio_cpu_replay_seed1/learning_curve.jsonl",
+      "/local/s3311716/DRL/r2dreamer/logdir/reacher_hard_images_proprio_cpu_replay_seed2/learning_curve.jsonl"
+    ]
+  },
+  "std_ddof": 1,
+  "interpolation": "linear, no extrapolation or smoothing",
+  "shared_ranges": {
+    "environment_steps": [
+      0.0,
+      990016.0
+    ],
+    "active_hours": [
+      2.154246968631115e-06,
+      8.936538482406597
+    ]
+  },
+  "time_definition": "Active time excludes setup, downtime and checkpoint saving."
+}
