@@ -12,7 +12,12 @@
     ]
   },
   "std_ddof": 1,
-  "interpolation": "linear, no extrapolation or smoothing",
+  "interpolation": "linear, no extrapolation",
+  "smoothing": {
+    "method": "centered moving average before alignment and seed aggregation",
+    "window_evaluations": 5,
+    "edges": "truncated window"
+  },
   "shared_ranges": {
     "environment_steps": [
       0.0,

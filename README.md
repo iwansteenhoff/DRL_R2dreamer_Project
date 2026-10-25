@@ -320,7 +320,10 @@ This reads the six `reacher_hard_images[_proprio]_cpu_replay_seed*` runs and sav
 `plots/seed_comparison/mean_std_comparison.png` and `.pdf`, plus the aggregated
 values in `mean_std_data.csv` and source/alignment information in
 `plot_metadata.json`. Both panels use linear interpolation onto shared grids
-within the range observed by **all six runs**, with no extrapolation or smoothing.
+within the range observed by **all six runs**, with no extrapolation. Each seed
+is first smoothed with a centered five-evaluation moving average (shorter windows
+at boundaries); the mean and SD are computed from those smoothed seed curves.
+Use `--smooth-window 1` for raw curves, or another positive odd window size.
 The time panel therefore stops at the shortest run's last recorded active time.
 Bands show sample standard deviation across three training seeds (`ddof=1`),
 not a confidence interval or variation across evaluation episodes. Override

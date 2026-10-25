@@ -10,14 +10,22 @@ import numpy as np
 from plot_learning_curves import load_curve
 
 
-def aggregate(groups, coordinate):
+def smooth(values, window):
+    """Centered moving average, using fewer points at the boundaries."""
+    radius = window // 2
+    return np.asarray(
+        [values[max(0, i - radius) : min(len(values), i + radius + 1)].mean() for i in range(len(values))]
+    )
+
+
+def aggregate(groups, coordinate, smooth_window=1):
     """Interpolate onto a shared grid, restricting it to every run's observed range."""
     curves = {}
     for label, runs in groups.items():
         curves[label] = []
         for run in runs:
             data = np.asarray(run, dtype=float)
-            x, y = data[:, coordinate], data[:, 2]
+            x, y = data[:, coordinate], smooth(data[:, 2], smooth_window)
             # If time measurements coincide, retain the later evaluation.
             keep = np.r_[np.diff(x) != 0, True]
             curves[label].append((x[keep], y[keep]))
@@ -45,7 +53,15 @@ def main():
         default=[f"logdir/reacher_hard_images_proprio_cpu_replay_seed{seed}" for seed in range(3)],
     )
     parser.add_argument("--output-dir", type=Path, default=Path("plots/seed_comparison"))
+    parser.add_argument(
+        "--smooth-window",
+        type=int,
+        default=5,
+        help="Centered moving average over this many evaluations per seed; odd, 1 disables",
+    )
     args = parser.parse_args()
+    if args.smooth_window < 1 or args.smooth_window % 2 == 0:
+        parser.error("--smooth-window must be a positive odd integer")
     groups, sources = {}, {}
     for label, paths in (("Images only", args.images), ("Images + proprioception", args.proprio)):
         if len(paths) < 2:
@@ -67,7 +83,7 @@ def main():
     records = []
     ranges = {}
     for axis, coordinate, name, scale in ((axes[0], 0, "environment_steps", 1), (axes[1], 1, "active_hours", 3600)):
-        grid, stats = aggregate(groups, coordinate)
+        grid, stats = aggregate(groups, coordinate, args.smooth_window)
         ranges[name] = [float(grid[0] / scale), float(grid[-1] / scale)]
         for label, values in stats.items():
             mean, std = values["mean"], values["std"]
@@ -96,7 +112,11 @@ def main():
     axes[1].set_title("Return versus active wall-clock time")
     axes[1].set_xlabel("Cumulative active time (hours)")
     fig.suptitle("R2-Dreamer: Reacher hard")
-    fig.supxlabel("Lines: mean across training seeds; shaded bands: ±1 sample standard deviation")
+    fig.supxlabel(
+        f"Per-seed smoothing: {args.smooth_window}-evaluation moving average; lines: mean; shading: ±1 sample SD"
+        if args.smooth_window > 1
+        else "Lines: mean across training seeds; shaded bands: ±1 sample standard deviation"
+    )
     args.output_dir.mkdir(parents=True, exist_ok=True)
     for extension in ("png", "pdf"):
         path = args.output_dir / f"mean_std_comparison.{extension}"
@@ -104,13 +124,18 @@ def main():
         print(f"Saved {path}")
     plt.close(fig)
     with (args.output_dir / "mean_std_data.csv").open("w", newline="") as stream:
-        writer = csv.DictWriter(stream, fieldnames=list(records[0]))
+        writer = csv.DictWriter(stream, fieldnames=list(records[0]), lineterminator="\n")
         writer.writeheader()
         writer.writerows(records)
     metadata = {
         "sources": sources,
         "std_ddof": 1,
-        "interpolation": "linear, no extrapolation or smoothing",
+        "interpolation": "linear, no extrapolation",
+        "smoothing": {
+            "method": "centered moving average before alignment and seed aggregation",
+            "window_evaluations": args.smooth_window,
+            "edges": "truncated window",
+        },
         "shared_ranges": ranges,
         "time_definition": "Active time excludes setup, downtime and checkpoint saving.",
     }
