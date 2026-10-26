@@ -9,6 +9,8 @@ from envs.wrappers import Dtype, NormalizeActions, TimeLimit
 
 CONDITIONS = ("baseline", "wrong_target", "frozen", "unrelated", "black", "corrupted_proprio")
 PROPRIO_KEYS = ("position", "velocity")
+# every state key Reacher returns, to_target is only fed to models trained with it
+STATE_KEYS = ("position", "velocity", "to_target")
 
 
 def sample_target(seed):
@@ -68,7 +70,7 @@ def make_evaluation_env(config, seed, fake_target=None, time_limit=None):
 
 
 class ObservationAblation:
-    def __init__(self, condition, initial_image, donor=None):
+    def __init__(self, condition, initial_image, donor=None, state_keys=PROPRIO_KEYS):
         if condition not in CONDITIONS:
             raise ValueError(f"Unknown condition: {condition}")
         if condition in ("unrelated", "corrupted_proprio") and not donor:
@@ -76,6 +78,8 @@ class ObservationAblation:
         self.condition = condition
         self.initial_image = initial_image.copy()
         self.donor = donor
+        # corrupted_proprio replaces every state input the model uses
+        self.state_keys = tuple(state_keys)
 
     def apply(self, observation, step):
         result = dict(observation)
@@ -86,15 +90,16 @@ class ObservationAblation:
         elif self.condition in ("unrelated", "corrupted_proprio"):
             if step >= len(self.donor):
                 raise ValueError("Donor episode is shorter than the evaluated episode.")
-            keys = ("image",) if self.condition == "unrelated" else PROPRIO_KEYS
+            keys = ("image",) if self.condition == "unrelated" else self.state_keys
             for key in keys:
                 result[key] = self.donor[step][key].copy()
         return result
 
 
-def policy_observation(observation, device):
-    # Explicit whitelist: target vectors, rewards, and diagnostics never reach the policy.
-    keys = ("image", *PROPRIO_KEYS, "is_first", "is_last", "is_terminal")
+def policy_observation(observation, device, state_keys=PROPRIO_KEYS):
+    # Explicit whitelist: only the state keys the model was trained on reach the policy,
+    # rewards and diagnostics never do.
+    keys = ("image", *state_keys, "is_first", "is_last", "is_terminal")
     return TensorDict(
         {key: torch.as_tensor(np.array(observation[key], copy=True), device=device).unsqueeze(0) for key in keys},
         batch_size=[1],

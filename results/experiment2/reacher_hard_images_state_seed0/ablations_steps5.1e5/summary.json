@@ -1,0 +1,98 @@
+[
+  {
+    "condition": "baseline",
+    "episodes": 100,
+    "mean_return": 950.48,
+    "std_return": 139.8749427022567,
+    "return_ci95": [
+      921.53,
+      972.55
+    ],
+    "mean_paired_delta": 0.0,
+    "paired_delta_ci95": [
+      0.0,
+      0.0
+    ],
+    "interval_note": "Episode bootstrap; conditional on this single trained checkpoint."
+  },
+  {
+    "condition": "wrong_target",
+    "episodes": 100,
+    "mean_return": 13.02,
+    "std_return": 100.4858882499117,
+    "return_ci95": [
+      0.24,
+      35.37024999999999
+    ],
+    "mean_paired_delta": -937.46,
+    "paired_delta_ci95": [
+      -966.5712500000001,
+      -899.81875
+    ],
+    "interval_note": "Episode bootstrap; conditional on this single trained checkpoint."
+  },
+  {
+    "condition": "frozen",
+    "episodes": 100,
+    "mean_return": 18.21,
+    "std_return": 38.390417312320814,
+    "return_ci95": [
+      11.52975,
+      26.50124999999998
+    ],
+    "mean_paired_delta": -932.27,
+    "paired_delta_ci95": [
+      -956.0414999999999,
+      -898.4495000000001
+    ],
+    "interval_note": "Episode bootstrap; conditional on this single trained checkpoint."
+  },
+  {
+    "condition": "unrelated",
+    "episodes": 100,
+    "mean_return": 101.69,
+    "std_return": 217.26117481227075,
+    "return_ci95": [
+      61.7485,
+      146.83225
+    ],
+    "mean_paired_delta": -848.79,
+    "paired_delta_ci95": [
+      -895.7302500000001,
+      -798.27725
+    ],
+    "interval_note": "Episode bootstrap; conditional on this single trained checkpoint."
+  },
+  {
+    "condition": "black",
+    "episodes": 100,
+    "mean_return": 8.14,
+    "std_return": 10.52272192769897,
+    "return_ci95": [
+      6.17,
+      10.34
+    ],
+    "mean_paired_delta": -942.34,
+    "paired_delta_ci95": [
+      -964.8,
+      -913.0085
+    ],
+    "interval_note": "Episode bootstrap; conditional on this single trained checkpoint."
+  },
+  {
+    "condition": "corrupted_proprio",
+    "episodes": 100,
+    "mean_return": 501.59,
+    "std_return": 457.3838229705457,
+    "return_ci95": [
+      410.41,
+      590.4915
+    ],
+    "mean_paired_delta": -448.89,
+    "paired_delta_ci95": [
+      -537.623,
+      -361.97800000000007
+    ],
+    "interval_note": "Episode bootstrap; conditional on this single trained checkpoint."
+  }
+]

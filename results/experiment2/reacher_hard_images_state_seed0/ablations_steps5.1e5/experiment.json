@@ -1,0 +1,50 @@
+{
+  "checkpoint": "/local/s3622223/r2-dreamer/logdir/reacher_hard_images_state_seed0/latest.pt",
+  "training_step": 510016,
+  "episodes": 100,
+  "seed_start": 100000,
+  "device": "cuda:0",
+  "conditions": [
+    "baseline",
+    "wrong_target",
+    "frozen",
+    "unrelated",
+    "black",
+    "corrupted_proprio"
+  ],
+  "state_inputs": [
+    "position",
+    "velocity",
+    "to_target"
+  ],
+  "modality_dropout": 0.0,
+  "environment": {
+    "task": "dmc_reacher_hard",
+    "env_num": 16,
+    "eval_episode_num": 10,
+    "action_repeat": 2,
+    "train_ratio": 512,
+    "time_limit": 1000,
+    "seed": 0,
+    "device": "cuda:0",
+    "size": [
+      64,
+      64
+    ],
+    "encoder": {
+      "mlp_keys": "^(position|to_target|velocity)$",
+      "cnn_keys": "image"
+    },
+    "decoder": {
+      "mlp_keys": "^(position|to_target|velocity)$",
+      "cnn_keys": "image"
+    }
+  },
+  "time_limit_override": null,
+  "actor": "mode",
+  "rssm": "sampled, matched policy seeds",
+  "donor": "Independent baseline-policy episode; seed = live seed + 1000003 (mod 2**32)",
+  "confidence_intervals": "95% paired episode bootstrap, not training-seed uncertainty",
+  "status": "complete",
+  "total_seconds": 1152.0803302699933
+}

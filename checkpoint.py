@@ -22,6 +22,9 @@ def experiment_config(config):
     state["env"].pop("steps", None)
     state["trainer"].pop("steps", None)
     state["trainer"].pop("update_log_every", None)
+    # runs saved before modality dropout existed trained without it
+    if "model" in state:
+        state["model"].setdefault("modality_dropout", 0.0)
     if "buffer" in state:
         for key in ("backend", "directory", "storage_device"):
             state["buffer"].pop(key, None)

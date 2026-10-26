@@ -328,3 +328,40 @@ The time panel therefore stops at the shortest run's last recorded active time.
 Bands show sample standard deviation across three training seeds (`ddof=1`),
 not a confidence interval or variation across evaluation episodes. Override
 `--images`, `--proprio`, and `--output-dir` to use different run groups or paths.
+
+
+## Experiment 2: images plus a state that is enough on its own
+
+The experiment above feeds the policy joint positions and velocities, so the target is only visible in
+the image. In this second experiment the encoder also receives `to_target`, the vector from the fingertip
+to the target. The state alone is then enough to solve Reacher, which lets us check whether the model
+still uses the images when it does not need them.
+
+`configs/env/dmc_multimodal.yaml` sends the image to the CNN and `position`, `to_target` and `velocity`
+to the MLP. Budget and settings match `dmc_vision`, so the existing image-only Reacher hard run is
+the baseline and is not trained again.
+
+Modality dropout is set with `model.modality_dropout` (default 0, off). With probability p a training
+sequence loses one modality for the whole window, the image or the state with equal chance, never both.
+The lost part of the encoder embedding is set to zero before it enters the posterior, so the world model
+has to infer the latent state from the remaining modality. The R2-Dreamer redundancy loss still uses the
+full embedding as its target. Dropout is only applied during training updates, never while acting
+or evaluating. With p = 0.5, a quarter of the sequences lose the image, a quarter lose the state, and
+half see both.
+
+The run script trains image + state with and without dropout and then evaluates both checkpoints:
+
+```bash
+bash runs/reacher_state_sufficient.sh [seed] [env steps]   # defaults: seed 0, 5.1e5 steps
+```
+
+Running the script again with the same seed and a bigger budget continues both runs from their
+checkpoints (for example `bash runs/reacher_state_sufficient.sh 0 1.01e6`). The step budget only
+decides when the loop stops, so a continued run trains the same way as one started with the bigger budget.
+Each budget writes its ablations to its own `ablations_steps<budget>/` folder.
+
+`evaluate_ablations.py` detects which state inputs a checkpoint uses and feeds only those to the policy.
+For these models `corrupted_proprio` replaces all three state inputs with the donor episode, including
+`to_target`, so in that condition the true target is only visible in the image. In `wrong_target` the
+image shows a fake target while `to_target` still points at the real one, so the two modalities
+disagree. The experiment manifest records `state_inputs` and `modality_dropout`.

@@ -1,4 +1,4 @@
-"""Evaluate a frozen image+proprioception Reacher checkpoint under six input conditions."""
+"""Evaluate a frozen image+state Reacher checkpoint under six input conditions."""
 
 import argparse
 import csv
@@ -15,6 +15,7 @@ import tools
 from ablations import (
     CONDITIONS,
     PROPRIO_KEYS,
+    STATE_KEYS,
     ObservationAblation,
     make_evaluation_env,
     policy_observation,
@@ -24,7 +25,9 @@ from dreamer import Dreamer
 
 
 @torch.inference_mode()
-def rollout(agent, env_config, seed, condition="baseline", donor=None, record=False, time_limit=None):
+def rollout(
+    agent, env_config, seed, condition="baseline", donor=None, record=False, time_limit=None, state_keys=PROPRIO_KEYS
+):
     fake_target = sample_target((seed + 2_000_003) % 2**32) if condition == "wrong_target" else None
     env = make_evaluation_env(env_config, seed, fake_target, time_limit)
     started = time.perf_counter()
@@ -32,22 +35,22 @@ def rollout(agent, env_config, seed, condition="baseline", donor=None, record=Fa
         obs = env.reset()
         initial = env.unwrapped._env.physics.get_state().copy()
         real_target = env.unwrapped.geometry()["target"]
-        transform = ObservationAblation(condition, obs["image"], donor)
+        transform = ObservationAblation(condition, obs["image"], donor, state_keys)
         # Match stochastic RSSM draws across conditions; actor uses its evaluation mode.
         tools.set_seed_everywhere((seed + 3_000_017) % 2**32)
         state = agent.get_initial_state(1)
         frames, sequence, endpoint, true_proprio, input_proprio, actions = [], [], [], [], [], []
         score, step = 0.0, 0
         while True:
-            sequence.append({key: obs[key].copy() for key in ("image", *PROPRIO_KEYS)})
+            sequence.append({key: obs[key].copy() for key in ("image", *STATE_KEYS)})
             fed = transform.apply(obs, step)
             if record:
                 truth = env.unwrapped.render_true() if condition == "wrong_target" else obs["image"]
                 frames.append(np.concatenate([truth, fed["image"]], axis=1))
                 endpoint.append(env.unwrapped.geometry()["endpoint"])
-                true_proprio.append(np.concatenate([obs[key] for key in PROPRIO_KEYS]))
-                input_proprio.append(np.concatenate([fed[key] for key in PROPRIO_KEYS]))
-            action, state = agent.act(policy_observation(fed, agent.device), state, eval=True)
+                true_proprio.append(np.concatenate([obs[key] for key in state_keys]))
+                input_proprio.append(np.concatenate([fed[key] for key in state_keys]))
+            action, state = agent.act(policy_observation(fed, agent.device, state_keys), state, eval=True)
             action = action[0].float().cpu().numpy()
             if record:
                 actions.append(action.copy())
@@ -56,7 +59,7 @@ def rollout(agent, env_config, seed, condition="baseline", donor=None, record=Fa
             step += 1
             if done:
                 # Donor streams include terminal observations for complete time alignment.
-                sequence.append({key: obs[key].copy() for key in ("image", *PROPRIO_KEYS)})
+                sequence.append({key: obs[key].copy() for key in ("image", *STATE_KEYS)})
                 break
         if agent.device.type == "cuda":
             torch.cuda.synchronize(agent.device)
@@ -114,11 +117,18 @@ def load_agent(checkpoint_path, device):
     finally:
         env.close()
     agent.load_state_dict(saved["agent"], strict=True)
-    if set(agent.encoder.cnn_shapes) != {"image"} or set(agent.encoder.mlp_shapes) != set(PROPRIO_KEYS):
-        raise ValueError("Checkpoint must encode image plus position/velocity only; no target-state inputs.")
+    # image + joints (target only visible in the image) or image + full state (target also in to_target)
+    allowed = (set(PROPRIO_KEYS), set(STATE_KEYS))
+    if set(agent.encoder.cnn_shapes) != {"image"} or set(agent.encoder.mlp_shapes) not in allowed:
+        raise ValueError("Checkpoint must encode the image plus position/velocity, optionally with to_target.")
     agent.requires_grad_(False)
     agent.eval()
     return agent, config, int(saved["trainer"]["step"])
+
+
+def model_state_keys(agent):
+    # state keys the model was trained on, in the order of STATE_KEYS
+    return tuple(key for key in STATE_KEYS if key in agent.encoder.mlp_shapes)
 
 
 def summarize(rows, bootstrap_seed=12345, samples=5000):
@@ -195,6 +205,8 @@ def main():
         json.dump({"status": "initializing", "checkpoint": str(checkpoint_path.resolve())}, stream)
     device = torch.device(args.device)
     agent, config, training_step = load_agent(checkpoint_path, device)
+    state_keys = model_state_keys(agent)
+    print("State inputs fed to the policy:", state_keys)
     manifest = {
         "checkpoint": str(checkpoint_path.resolve()),
         "training_step": training_step,
@@ -202,6 +214,8 @@ def main():
         "seed_start": args.seed_start,
         "device": str(device),
         "conditions": CONDITIONS,
+        "state_inputs": state_keys,
+        "modality_dropout": float(config.model.get("modality_dropout", 0.0)),
         "environment": OmegaConf.to_container(config.env, resolve=True),
         "time_limit_override": args.time_limit,
         "actor": "mode",
@@ -217,11 +231,13 @@ def main():
         for index in range(args.episodes):
             seed = args.seed_start + index
             donor_seed = (seed + 1_000_003) % 2**32
-            _, donor, _, _ = rollout(agent, config.env, donor_seed, time_limit=args.time_limit)
+            _, donor, _, _ = rollout(
+                agent, config.env, donor_seed, time_limit=args.time_limit, state_keys=state_keys
+            )
             reference = None
             for condition in CONDITIONS:
                 row, _, frames, diagnostic = rollout(
-                    agent, config.env, seed, condition, donor, index < args.videos, args.time_limit
+                    agent, config.env, seed, condition, donor, index < args.videos, args.time_limit, state_keys
                 )
                 matched = (row["initial_state"], row["real_target"])
                 if reference is not None and matched != reference:

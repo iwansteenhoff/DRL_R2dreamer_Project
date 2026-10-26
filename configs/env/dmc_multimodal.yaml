@@ -1,0 +1,22 @@
+task: 'dmc_reacher_hard'
+# same budget and settings as dmc_vision so the image-only run is a fair baseline
+steps: 1.01e6
+env_num: 16
+eval_episode_num: 10
+action_repeat: 2
+train_ratio: 512
+time_limit: 1000
+
+seed: ${seed}
+device: ${device}
+
+size: [64, 64]
+# the image goes to the CNN and the full Reacher state goes to the MLP
+# to_target is the vector from the fingertip to the target, so the state alone is enough to solve the task
+encoder:
+  mlp_keys: '^(position|to_target|velocity)$'
+  cnn_keys: 'image'
+# only used by the decoder based baseline (model.rep_loss=dreamer), r2dreamer has no decoder
+decoder:
+  mlp_keys: '^(position|to_target|velocity)$'
+  cnn_keys: 'image'

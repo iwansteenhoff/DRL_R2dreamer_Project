@@ -7,6 +7,9 @@ compile: True
 log_grads: False
 device: ${device}
 rep_loss: "r2dreamer" # r2dreamer/dreamer/infonce/dreamerpro
+# chance that one modality (image or state) is hidden from the posterior for a whole training sequence
+# only has an effect when the encoder uses both images and state, 0 turns it off
+modality_dropout: 0.0
 
 lr: 4e-5
 agc: 0.3

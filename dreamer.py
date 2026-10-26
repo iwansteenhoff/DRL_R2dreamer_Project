@@ -32,6 +32,8 @@ class Dreamer(nn.Module):
         self.return_ema = networks.ReturnEMA(device=self.device)
         self.act_dim = act_space.n if hasattr(act_space, "n") else sum(act_space.shape)
         self.rep_loss = str(config.rep_loss)
+        # older checkpoints were saved before this option existed
+        self.modality_dropout = float(config.get("modality_dropout", 0.0))
 
         # World model components
         shapes = {k: tuple(v.shape) for k, v in obs_space.spaces.items()}
@@ -399,8 +401,13 @@ class Dreamer(nn.Module):
         # === World model: posterior rollout and KL losses ===
         # (B, T, E)
         embed = self.encoder(data)
+        # with modality dropout the posterior only sees part of the embedding,
+        # while the barlow target below keeps using the full embedding
+        posterior_embed = self.drop_modalities(embed) if self.modality_dropout > 0 else embed
         # (B, T, S, K), (B, T, D), (B, T, S, K)
-        post_stoch, post_deter, post_logit = self.rssm.observe(embed, data["action"], initial, data["is_first"])
+        post_stoch, post_deter, post_logit = self.rssm.observe(
+            posterior_embed, data["action"], initial, data["is_first"]
+        )
         # (B, T, S, K)
         _, prior_logit = self.rssm.prior(post_deter)
         dyn_loss, rep_loss = self.rssm.kl_loss(post_logit, prior_logit, self.kl_free)
@@ -604,6 +611,23 @@ class Dreamer(nn.Module):
         if "image" in data:
             data["image"] = to_f32(data["image"]) / 255.0
         return data
+
+    def drop_modalities(self, embed):
+        # embed: (B, T, E), the encoder concatenates [image embedding, state embedding]
+        if not (self.encoder.cnn_shapes and self.encoder.mlp_shapes):
+            raise ValueError("Modality dropout needs an encoder with both image and state inputs.")
+        B, _, E = embed.shape
+        image_dim = self.encoder.encoders[0].out_dim
+        # one draw per sequence so the modality stays missing for the whole training window
+        drop = torch.rand(B, device=embed.device) < self.modality_dropout
+        # when a sequence is dropped, hide the image or the state with equal chance, never both
+        drop_image = drop & (torch.rand(B, device=embed.device) < 0.5)
+        drop_state = drop & ~drop_image
+        # (E,) true for the image part of the embedding
+        is_image_part = torch.arange(E, device=embed.device) < image_dim
+        # (B, E) zero where the hidden modality sits, one everywhere else
+        mask = torch.where(is_image_part, (~drop_image).float()[:, None], (~drop_state).float()[:, None])
+        return embed * mask[:, None, :].to(embed.dtype)
 
     @torch.no_grad()
     def augment_data(self, data):

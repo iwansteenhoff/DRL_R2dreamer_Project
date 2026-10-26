@@ -152,3 +152,19 @@ def test_evaluation_freezes_checkpoint_and_is_reproducible(tmp_path):
     for key, value in agent.state_dict().items():
         assert torch.equal(value, before[key])
     assert not agent._optimizer.state
+
+
+def test_full_state_models_get_and_lose_to_target():
+    from ablations import STATE_KEYS
+
+    initial, live, donor = observation(1), observation(2), [observation(3)]
+    donor[0]["to_target"] = np.array([-1.0, -1.0])
+    # corrupted proprioception replaces every state input, including the target vector
+    actual = ObservationAblation("corrupted_proprio", initial["image"], donor, STATE_KEYS).apply(live, 0)
+    for key in STATE_KEYS:
+        np.testing.assert_array_equal(actual[key], donor[0][key])
+    # image corruptions leave the target vector untouched
+    actual = ObservationAblation("black", initial["image"], donor, STATE_KEYS).apply(live, 0)
+    np.testing.assert_array_equal(actual["to_target"], live["to_target"])
+    fed = policy_observation(actual, "cpu", STATE_KEYS)
+    assert fed["to_target"].shape == (1, 2) and "reward" not in fed
