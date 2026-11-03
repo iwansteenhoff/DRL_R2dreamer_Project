@@ -328,3 +328,18 @@ The time panel therefore stops at the shortest run's last recorded active time.
 Bands show sample standard deviation across three training seeds (`ddof=1`),
 not a confidence interval or variation across evaluation episodes. Override
 `--images`, `--proprio`, and `--output-dir` to use different run groups or paths.
+
+Aggregate the six-condition ablations across combined-model training seeds 0–4:
+
+```bash
+python plot_ablation_seeds.py
+```
+
+This reads each run's `ablations_all_seeds/` directory and saves plots and numeric
+summaries under `plots/five_seed_ablations/`. Each condition is first averaged over
+100 episodes within each model, then averaged across the five trained models.
+Black error bars show ±1 sample SD across those five model means; colored dots
+show the individual model means. The second panel subtracts baseline returns
+within matched episodes before aggregating. These are not confidence intervals,
+and the 500 episodes per condition are not treated as 500 independent trained
+models. Use `--runs` to specify other evaluation directories.
