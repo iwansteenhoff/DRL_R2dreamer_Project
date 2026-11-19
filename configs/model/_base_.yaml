@@ -67,6 +67,8 @@ rssm:
   device: ${device}
 
 encoder:
+  fusion: concat  # concat | balanced (projections) | balanced_direct (encoder outputs)
+  fusion_dim: 1280  # Total dimension in either balanced mode: 640 image + 640 vector features.
   mlp_keys: ${env.encoder.mlp_keys}
   cnn_keys: ${env.encoder.cnn_keys}
   mlp:

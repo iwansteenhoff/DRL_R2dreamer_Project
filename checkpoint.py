@@ -22,6 +22,13 @@ def experiment_config(config):
     state["env"].pop("steps", None)
     state["trainer"].pop("steps", None)
     state["trainer"].pop("update_log_every", None)
+    # New inactive fusion options must not invalidate original concatenation runs.
+    encoder = state.get("model", {}).get("encoder", {})
+    if encoder.get("fusion", "concat") == "concat":
+        encoder.pop("fusion", None)
+        encoder.pop("fusion_dim", None)
+    else:
+        encoder.setdefault("fusion_dim", 1280)
     if "buffer" in state:
         for key in ("backend", "directory", "storage_device"):
             state["buffer"].pop(key, None)

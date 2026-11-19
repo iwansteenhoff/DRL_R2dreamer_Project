@@ -1,0 +1,37 @@
+{
+  "sources": {
+    "Original combined": [
+      "/local/s3311716/DRL/r2dreamer/logdir/reacher_hard_images_proprio_cpu_replay_seed0/learning_curve.jsonl",
+      "/local/s3311716/DRL/r2dreamer/logdir/reacher_hard_images_proprio_cpu_replay_seed1/learning_curve.jsonl",
+      "/local/s3311716/DRL/r2dreamer/logdir/reacher_hard_images_proprio_cpu_replay_seed2/learning_curve.jsonl"
+    ],
+    "Balanced: linear projections": [
+      "/local/s3311716/DRL/r2dreamer/logdir/reacher_hard_images_proprio_balanced_seed0/learning_curve.jsonl",
+      "/local/s3311716/DRL/r2dreamer/logdir/reacher_hard_images_proprio_balanced_seed1/learning_curve.jsonl",
+      "/local/s3311716/DRL/r2dreamer/logdir/reacher_hard_images_proprio_balanced_seed2/learning_curve.jsonl"
+    ],
+    "Balanced: direct encoder outputs": [
+      "/local/s3311716/DRL/r2dreamer/logdir/reacher_hard_images_proprio_balanced_direct_seed0/learning_curve.jsonl",
+      "/local/s3311716/DRL/r2dreamer/logdir/reacher_hard_images_proprio_balanced_direct_seed1/learning_curve.jsonl",
+      "/local/s3311716/DRL/r2dreamer/logdir/reacher_hard_images_proprio_balanced_direct_seed2/learning_curve.jsonl"
+    ]
+  },
+  "std_ddof": 1,
+  "interpolation": "linear, no extrapolation",
+  "smoothing": {
+    "method": "centered moving average before alignment and seed aggregation",
+    "window_evaluations": 5,
+    "edges": "truncated window"
+  },
+  "shared_ranges": {
+    "environment_steps": [
+      0.0,
+      990016.0
+    ],
+    "active_hours": [
+      2.863209722110898e-06,
+      9.117253690846637
+    ]
+  },
+  "time_definition": "Active time excludes setup, downtime and checkpoint saving."
+}

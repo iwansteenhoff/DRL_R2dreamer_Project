@@ -343,3 +343,83 @@ show the individual model means. The second panel subtracts baseline returns
 within matched episodes before aggregating. These are not confidence intervals,
 and the 500 episodes per condition are not treated as 500 independent trained
 models. Use `--runs` to specify other evaluation directories.
+
+## Equal-width image and vector embeddings
+
+The original encoder (`model.encoder.fusion=concat`, still the default) concatenates
+1,024 image features with 256 proprioception/full-state features for size12M and
+64×64 images. To test an equal allocation, use `model.encoder.fusion=balanced`.
+It adds a learned linear projection to each branch and concatenates equally sized
+outputs. The default `model.encoder.fusion_dim=1280` gives **640 image + 640 vector
+features**, preserving the original combined embedding's total dimension. The
+RSSM and R2 representation projector adapt automatically to that dimension.
+Projections add parameters; this is not a parameter-matched control, and equal
+feature counts do not enforce equal influence, activation norms, or gradient sizes.
+No additional normalization or branch weighting is introduced.
+
+Train with images plus **proprioception only** (target information excluded):
+
+```bash
+MUJOCO_GL=egl python train.py \
+  env=dmc_vision env.task=dmc_reacher_hard env.steps=1000000 \
+  model.rep_loss=r2dreamer \
+  'env.encoder.mlp_keys="^(position|velocity)$"' \
+  model.encoder.fusion=balanced \
+  buffer.storage_device=cpu seed=0 \
+  logdir=./logdir/reacher_hard_images_proprio_balanced_seed0
+```
+
+Train with images plus **full Reacher state**, including the target vector:
+
+```bash
+MUJOCO_GL=egl python train.py \
+  env=dmc_vision env.task=dmc_reacher_hard env.steps=1000000 \
+  model.rep_loss=r2dreamer \
+  'env.encoder.mlp_keys="^(position|velocity|to_target)$"' \
+  model.encoder.fusion=balanced \
+  buffer.storage_device=cpu seed=0 \
+  logdir=./logdir/reacher_hard_images_fullstate_balanced_seed0
+```
+
+For other widths, set an even total such as `model.encoder.fusion_dim=2048`
+(1,024 per branch). Balanced mode requires both images and vector observations.
+Startup output prints each projected width and total dimension. Use new run
+directories and train from scratch when changing fusion mode/width; old learned
+weights are not interchangeable with balanced checkpoints. Resuming original
+concatenation runs remains supported, and standalone ablation loading reads the
+fusion architecture from the saved checkpoint automatically. The existing
+six-condition proprioception ablation runner deliberately rejects full-state
+models because its protocol excludes numerical target information.
+
+### Equal outputs without projection layers
+
+Use `model.encoder.fusion=balanced_direct` to modify the existing encoders'
+final layers instead of adding linear projections. At the default total
+`fusion_dim=1280` and 64×64 resolution, the CNN's final convolution has 40 channels
+(40×4×4 = 640 features); its earlier channels remain 32, 48, and 64. The
+proprioception MLP keeps its first two 256-unit layers and changes only its final
+layer (including RMSNorm) to 640 units. The outputs concatenate directly into
+1,280 features, with no extra layers. This adds 60,624 trainable parameters to
+the original size12M combined model (12,755,667 total, approximately +0.48%).
+The old `balanced` projection mode and `concat` default are unchanged.
+
+Train three independent proprioception-only combined runs sequentially:
+
+```bash
+for seed in 0 1 2; do
+  MUJOCO_GL=egl python train.py \
+    env=dmc_vision env.task=dmc_reacher_hard env.steps=1000000 \
+    model.rep_loss=r2dreamer \
+    'env.encoder.mlp_keys="^(position|velocity)$"' \
+    model.encoder.fusion=balanced_direct \
+    buffer.storage_device=cpu seed="$seed" \
+    logdir="./logdir/reacher_hard_images_proprio_balanced_direct_seed${seed}" \
+    || break
+done
+```
+
+For full-state input use `^(position|velocity|to_target)$` and distinct logdirs.
+Direct mode also supports `fusion_dim`, but each branch's width must be divisible
+by the CNN's final spatial area (16 for this 64×64, four-pooling-block encoder).
+Use new run directories; changing fusion architecture requires training from
+scratch. Resume with the same architecture and `resume=True`.

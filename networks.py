@@ -113,21 +113,47 @@ class MultiEncoder(nn.Module):
         print("Encoder CNN shapes:", self.cnn_shapes)
         print("Encoder MLP shapes:", self.mlp_shapes)
 
+        self.fusion = getattr(config, "fusion", "concat")
+        direct_dim = None
+        if self.fusion in ("balanced", "balanced_direct"):
+            if not self.cnn_shapes or not self.mlp_shapes:
+                raise ValueError("Balanced fusion requires both image and vector observations.")
+            dimension = getattr(config, "fusion_dim", 1280)
+            if isinstance(dimension, bool) or not isinstance(dimension, int) or dimension <= 0 or dimension % 2:
+                raise ValueError("encoder.fusion_dim must be a positive even integer.")
+            if self.fusion == "balanced_direct":
+                direct_dim = dimension // 2
         self.out_dim = 0
         self.selectors = []
         self.encoders = []
         if self.cnn_shapes:
             input_ch = sum([v[-1] for v in self.cnn_shapes.values()])
             input_shape = tuple(self.cnn_shapes.values())[0][:2] + (input_ch,)
-            self.encoders.append(ConvEncoder(config.cnn, input_shape))
+            self.encoders.append(ConvEncoder(config.cnn, input_shape, output_dim=direct_dim))
             self.selectors.append(lambda obs: torch.cat([obs[k] for k in self.cnn_shapes], -1))
             self.out_dim += self.encoders[-1].out_dim
         if self.mlp_shapes:
             inp_dim = sum([sum(v) for v in self.mlp_shapes.values()])
-            self.encoders.append(MLP(config.mlp, inp_dim))
+            self.encoders.append(MLP(config.mlp, inp_dim, output_dim=direct_dim))
             self.selectors.append(lambda obs: torch.cat([obs[k] for k in self.mlp_shapes], -1))
             self.out_dim += self.encoders[-1].out_dim
         self.encoders = nn.ModuleList(self.encoders)
+        self.fusion = getattr(config, "fusion", "concat")
+        self.projections = nn.ModuleList()
+        if self.fusion == "balanced":
+            if not self.cnn_shapes or not self.mlp_shapes:
+                raise ValueError("Balanced fusion requires both image and vector observations.")
+            dimension = getattr(config, "fusion_dim", 1280)
+            if isinstance(dimension, bool) or not isinstance(dimension, int) or dimension <= 0 or dimension % 2:
+                raise ValueError("encoder.fusion_dim must be a positive even integer.")
+            per_modality = dimension // 2
+            self.projections.extend(nn.Linear(encoder.out_dim, per_modality) for encoder in self.encoders)
+            self.out_dim = dimension
+            print(f"Balanced encoder embeddings: image={per_modality}, vector={per_modality}, total={dimension}")
+        elif self.fusion == "balanced_direct":
+            print(f"Direct balanced encoder outputs: image={direct_dim}, vector={direct_dim}, total={self.out_dim}")
+        elif self.fusion != "concat":
+            raise ValueError(f"Unknown encoder fusion: {self.fusion}")
 
         if len(self.encoders) > 1:
             self.fuser = lambda x: torch.cat(x, dim=-1)
@@ -141,7 +167,10 @@ class MultiEncoder(nn.Module):
     def forward(self, obs):
         """Encode a dict of observations."""
         # dict of (B, T, *)
-        return self.fuser([enc(sel(obs)) for enc, sel in zip(self.encoders, self.selectors)])
+        features = [enc(sel(obs)) for enc, sel in zip(self.encoders, self.selectors)]
+        if self.fusion == "balanced":
+            features = [project(feature) for project, feature in zip(self.projections, features)]
+        return self.fuser(features)
 
 
 class MultiDecoder(nn.Module):
@@ -193,11 +222,17 @@ class MultiDecoder(nn.Module):
 
 
 class ConvEncoder(nn.Module):
-    def __init__(self, config, input_shape):
+    def __init__(self, config, input_shape, output_dim=None):
         super().__init__()
         act = getattr(torch.nn, config.act)
         h, w, input_ch = input_shape
         self.depths = tuple(int(config.depth) * int(mult) for mult in list(config.mults))
+        if output_dim is not None:
+            final_h, final_w = h // 2 ** len(self.depths), w // 2 ** len(self.depths)
+            spatial_size = final_h * final_w
+            if spatial_size == 0 or output_dim % spatial_size:
+                raise ValueError("Direct CNN output dimension must be divisible by the final spatial area.")
+            self.depths = self.depths[:-1] + (output_dim // spatial_size,)
         self.kernel_size = int(config.kernel_size)
         in_dim = input_ch
         layers = []
@@ -318,18 +353,22 @@ class MLP(nn.Module):
         self,
         config,
         inp_dim,
+        output_dim=None,
     ):
         super().__init__()
         act = getattr(torch.nn, config.act)
         self._symlog_inputs = bool(config.symlog_inputs)
         self._device = torch.device(config.device)
         self.layers = nn.Sequential()
+        if output_dim is not None and config.layers < 1:
+            raise ValueError("Direct MLP output requires at least one layer.")
         for i in range(config.layers):
-            self.layers.add_module(f"{config.name}_linear{i}", nn.Linear(inp_dim, config.units, bias=True))
-            self.layers.add_module(f"{config.name}_norm{i}", nn.RMSNorm(config.units, eps=1e-04, dtype=torch.float32))
+            width = output_dim if output_dim is not None and i == config.layers - 1 else config.units
+            self.layers.add_module(f"{config.name}_linear{i}", nn.Linear(inp_dim, width, bias=True))
+            self.layers.add_module(f"{config.name}_norm{i}", nn.RMSNorm(width, eps=1e-04, dtype=torch.float32))
             self.layers.add_module(f"{config.name}_act{i}", act())
-            inp_dim = config.units
-        self.out_dim = config.units
+            inp_dim = width
+        self.out_dim = inp_dim
 
     def forward(self, x):
         # (B, T, I)

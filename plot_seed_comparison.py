@@ -52,6 +52,10 @@ def main():
         nargs="+",
         default=[f"logdir/reacher_hard_images_proprio_cpu_replay_seed{seed}" for seed in range(3)],
     )
+    parser.add_argument("--balanced-direct", nargs="+", help="Direct equal-output combined run directories")
+    parser.add_argument("--combined-only", action="store_true", help="Omit the image-only group")
+    parser.add_argument("--balanced", nargs="+", help="Optional balanced image + proprioception run directories")
+    parser.add_argument("--prefix", default="mean_std_comparison", help="Output figure filename prefix")
     parser.add_argument("--output-dir", type=Path, default=Path("plots/seed_comparison"))
     parser.add_argument(
         "--smooth-window",
@@ -63,7 +67,13 @@ def main():
     if args.smooth_window < 1 or args.smooth_window % 2 == 0:
         parser.error("--smooth-window must be a positive odd integer")
     groups, sources = {}, {}
-    for label, paths in (("Images only", args.images), ("Images + proprioception", args.proprio)):
+    run_groups = [] if args.combined_only else [("Images only", args.images)]
+    run_groups.append(("Original combined", args.proprio))
+    if args.balanced:
+        run_groups.append(("Balanced: linear projections", args.balanced))
+    if args.balanced_direct:
+        run_groups.append(("Balanced: direct encoder outputs", args.balanced_direct))
+    for label, paths in run_groups:
         if len(paths) < 2:
             parser.error("Each group needs at least two runs for a sample standard deviation.")
         if len(set(str(Path(path).resolve()) for path in paths)) != len(paths):
@@ -119,11 +129,12 @@ def main():
     )
     args.output_dir.mkdir(parents=True, exist_ok=True)
     for extension in ("png", "pdf"):
-        path = args.output_dir / f"mean_std_comparison.{extension}"
+        path = args.output_dir / f"{args.prefix}.{extension}"
         fig.savefig(path, dpi=200)
         print(f"Saved {path}")
     plt.close(fig)
-    with (args.output_dir / "mean_std_data.csv").open("w", newline="") as stream:
+    data_name = f"{args.prefix}_data.csv" if args.prefix != "mean_std_comparison" else "mean_std_data.csv"
+    with (args.output_dir / data_name).open("w", newline="") as stream:
         writer = csv.DictWriter(stream, fieldnames=list(records[0]), lineterminator="\n")
         writer.writeheader()
         writer.writerows(records)
@@ -139,7 +150,7 @@ def main():
         "shared_ranges": ranges,
         "time_definition": "Active time excludes setup, downtime and checkpoint saving.",
     }
-    (args.output_dir / "plot_metadata.json").write_text(json.dumps(metadata, indent=2) + "\n")
+    (args.output_dir / (f"{args.prefix}_metadata.json" if args.prefix != "mean_std_comparison" else "plot_metadata.json")).write_text(json.dumps(metadata, indent=2) + "\n")
 
 
 if __name__ == "__main__":

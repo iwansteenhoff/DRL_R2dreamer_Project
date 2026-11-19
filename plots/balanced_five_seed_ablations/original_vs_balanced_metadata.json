@@ -1,0 +1,8 @@
+{
+  "sources": {
+    "Original combined": "/local/s3311716/DRL/r2dreamer/plots/five_seed_ablations",
+    "Balanced combined": "/local/s3311716/DRL/r2dreamer/plots/balanced_five_seed_ablations"
+  },
+  "error_bars": "Sample SD across per-training-seed episode means, ddof=1",
+  "paired_change": "Within-model, within-episode condition minus baseline; not an inter-model paired test"
+}
