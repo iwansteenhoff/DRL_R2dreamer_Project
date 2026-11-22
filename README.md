@@ -423,3 +423,133 @@ Direct mode also supports `fusion_dim`, but each branch's width must be divisibl
 by the CNN's final spatial area (16 for this 64×64, four-pooling-block encoder).
 Use new run directories; changing fusion architecture requires training from
 scratch. Resume with the same architecture and `resume=True`.
+
+## Project results: proprioception, embedding balance, and full state
+
+These experiments investigate whether proprioception accelerates R2-Dreamer and
+whether the way visual and vector features are combined affects learning.
+All models trained on **DMC Reacher hard for 1,000,000 environment steps**.
+The arm must reach a target randomized between episodes.
+
+### Models compared
+
+| Model | Vector input | Image + vector embedding |
+|---|---|---|
+| Images only | None | 1,024 image features |
+| Original combined | Joint positions and velocities | 1,024 + 256 |
+| Balanced with projections | Joint positions and velocities | Original encoders, then learned linear projections to 640 + 640 |
+| Balanced direct | Joint positions and velocities | Modified final CNN/MLP layers output 640 + 640 directly |
+| Balanced direct, full state | Joint positions, velocities, and target vector | Modified encoders output 640 + 640 directly |
+
+The proprioception models receive two joint positions and two joint velocities;
+`to_target` is excluded. The full-state model additionally receives `to_target`,
+so it does not have to obtain all goal-location information from images. This
+is a different information setting, not just another proprioception encoding.
+
+The projection-based architecture adds 820,480 parameters (+6.46%) to the original
+combined model. Direct balancing changes only the final encoder layers and adds
+60,624 parameters (+0.48%) for the proprioception model. Both keep the combined
+embedding at 1,280 dimensions. Equal feature counts do not enforce equal modality
+influence, and neither modification completely isolates dimensional allocation
+from changes in representation capacity.
+
+### Training results
+
+For consistency, this table uses **training seeds 0–2 for every model**, even
+though five seeds are available for images only, original combined, and balanced
+with projections. Metrics are computed from raw, unsmoothed evaluations.
+
+| Model | Mean steps to first return ≥800 | Mean active time to that point | Last-10 evaluation mean ± sample SD |
+|---|---:|---:|---:|
+| Images only | 307,000 | 2.78 h | 958.0 ± 23.0 |
+| Original combined | 280,000 | 2.59 h | 965.3 ± 7.2 |
+| Balanced with projections | **167,000** | **1.54 h** | 971.0 ± 0.7 |
+| Balanced direct | 213,000 | 1.97 h | 962.6 ± 12.3 |
+| Balanced direct, full state | 193,000 | 1.79 h | **971.2 ± 2.5** |
+
+Steps/time to return ≥800 are exploratory **first-crossing** measurements, not a
+predefined sustained-performance criterion. For the last column, each model's
+last ten evaluations are averaged first, then mean and sample SD are calculated
+across the three training seeds. The last recorded evaluation is at 990,016 steps,
+although all training runs reached 1,000,000 steps.
+
+Active time includes environment interaction, training, in-loop compilation,
+logging, and previous evaluations; it excludes setup, checkpoint saving, and
+downtime. It is not total elapsed turnaround time. One image-only run resumed
+early and changed replay implementation early in training, so runtime comparisons
+are practical pipeline measurements rather than a perfectly controlled benchmark.
+
+The main observations are:
+
+- **Proprioception alone did not establish a clear learning-speed advantage.**
+  The original combined and image-only learning curves were broadly similar.
+- **Both balanced architectures learned earlier than the original combined
+  model.** The improvement persists without adding projection layers and their
+  larger parameter increase.
+- **The projection-based architecture retained the strongest early-learning
+  advantage.** Equal dimensional allocation alone does not explain all of its
+  benefit; learned transformations or other architectural changes may contribute.
+- **Numerical target information improved the direct-balanced model further.**
+  Full-state input reached high performance earlier than proprioception alone,
+  consistent with reducing the need to infer the goal visually.
+- **Final performance was similar across models.** The main differences concern
+  learning efficiency rather than substantially higher eventual returns.
+
+Comparison figures (paths relative to this README):
+
+- [Images only, original combined, and projected balanced combined (five seeds)](plots/balanced_five_seed_comparison/three_model_comparison.png)
+- [Original combined and both balanced proprioception architectures (three seeds)](plots/balanced_five_seed_comparison/combined_architectures_three_seeds.png)
+- [Original proprioception, direct-balanced proprioception, and direct-balanced full state (three seeds)](plots/fullstate_balanced_direct_comparison/fullstate_vs_proprio.png)
+
+The figures smooth each seed with a centered five-evaluation moving average before
+calculating the across-seed mean and ±1 sample SD bands. Curves are aligned by
+linear interpolation within their shared observed ranges, without extrapolation.
+The bands are not confidence intervals or statistical-significance tests.
+
+### Modality ablation results
+
+The original and projection-balanced combined models were evaluated over **five
+trained seeds**, using 100 matched episodes per condition per model. Weights were
+frozen. Conditions were normal inputs, wrong visible target, frozen first frame,
+unrelated images, black images, and corrupted proprioception. Independent donor
+episodes supplied unrelated images or joint-state sequences. Fake targets changed
+only rendering, leaving the true task physics and rewards unchanged.
+
+| Condition | Original combined: mean ± SD | Balanced with projections: mean ± SD |
+|---|---:|---:|
+| Normal inputs | 963.63 ± 10.35 | 970.74 ± 1.17 |
+| Wrong visible target | 14.01 ± 5.58 | 15.52 ± 3.58 |
+| Frozen image | 16.01 ± 1.87 | 25.33 ± 8.41 |
+| Unrelated images | 7.92 ± 3.77 | 17.56 ± 2.39 |
+| Black image | 13.78 ± 3.54 | 15.94 ± 4.21 |
+| Corrupted proprioception | 703.36 ± 120.23 | 755.75 ± 48.12 |
+
+Each model's 100 episode returns are averaged first. SD here describes variation
+across the five **trained-model means**, not variation across individual episodes.
+
+Visual corruption caused near-total performance loss in both architectures.
+Corrupting proprioception also reduced performance, supporting behavioral reliance
+on **both modalities**. The projected balanced model was descriptively more
+tolerant of corrupted proprioception and had less between-seed variation, but
+still depended strongly on useful visual information. These ablations have not
+yet established the same conclusions for direct-balanced or full-state models.
+Input corruption also introduces unfamiliar or inconsistent observations, so
+performance drops are not exact percentages of each modality's contribution.
+
+[Original versus projected balanced ablation comparison](plots/balanced_five_seed_ablations/original_vs_balanced_ablation_comparison.png)
+
+### Overall interpretation and limitations
+
+**Proprioception did not automatically accelerate R2-Dreamer, but changing how
+visual and proprioceptive features are represented improved learning efficiency
+in these runs. Directly providing target information produced an additional
+benefit within the direct-balanced architecture.** The results support a role
+for both input information and representation design without yet isolating their
+exact mechanisms.
+
+The experiments cover one task and one hardware setup; the newest architectures
+have three training seeds. Lower observed variability is descriptive rather than
+proof of a reproducible variance reduction. No formal statistical significance
+has been established. Changes in parameter count, encoder capacity, and learned
+transformations remain possible explanations alongside equal embedding allocation.
+Broader claims require more seeds, architectural controls, and additional tasks.
