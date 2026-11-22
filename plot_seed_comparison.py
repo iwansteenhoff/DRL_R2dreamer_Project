@@ -52,6 +52,7 @@ def main():
         nargs="+",
         default=[f"logdir/reacher_hard_images_proprio_cpu_replay_seed{seed}" for seed in range(3)],
     )
+    parser.add_argument("--fullstate-direct", nargs="+", help="Direct-balanced image + full-state run directories")
     parser.add_argument("--balanced-direct", nargs="+", help="Direct equal-output combined run directories")
     parser.add_argument("--combined-only", action="store_true", help="Omit the image-only group")
     parser.add_argument("--balanced", nargs="+", help="Optional balanced image + proprioception run directories")
@@ -68,11 +69,13 @@ def main():
         parser.error("--smooth-window must be a positive odd integer")
     groups, sources = {}, {}
     run_groups = [] if args.combined_only else [("Images only", args.images)]
-    run_groups.append(("Original combined", args.proprio))
+    run_groups.append(("Original combined: proprioception", args.proprio))
     if args.balanced:
         run_groups.append(("Balanced: linear projections", args.balanced))
     if args.balanced_direct:
-        run_groups.append(("Balanced: direct encoder outputs", args.balanced_direct))
+        run_groups.append(("Balanced direct: proprioception", args.balanced_direct))
+    if args.fullstate_direct:
+        run_groups.append(("Balanced direct: full state", args.fullstate_direct))
     for label, paths in run_groups:
         if len(paths) < 2:
             parser.error("Each group needs at least two runs for a sample standard deviation.")
